@@ -9,7 +9,7 @@ from nn import *
 from util import count_vars, PPOBuffer
 
 
-def create_ppo_model(odim=10, adim=2, hdims=[256, 256], actv=tf.nn.relu):
+def create_ppo_model(env=None, hdims=[256,256]):
     """
     Proximal Policy Optimization Model (compatible with Ray)
     """
@@ -21,24 +21,29 @@ def create_ppo_model(odim=10, adim=2, hdims=[256, 256], actv=tf.nn.relu):
     sess = tf.Session(config=config)
     
     # Placeholders
+    odim = env.observation_space.shape[0]
+    adim = env.action_space.shape[0]
     o_ph, a_ph = placeholders(odim, adim)
     adv_ph, ret_ph, logp_old_ph = placeholders(None, None, None)
     
     # Actor-critic model 
     ac_kwargs = dict()
     ac_kwargs['action_space'] = env.action_space
-    actor_critic = mlp_actor_critic
-    pi, logp, logp_pi, v, mu = mlp_ppo_actor_critic(o_ph, a_ph, **ac_kwargs)
+    actor_critic = mlp_ppo_actor_critic
+    with tf.variable_scope('main'):
+        pi, logp, logp_pi, v, mu = actor_critic(o_ph, a_ph, **ac_kwargs)
     
     # Need all placeholders in *this* order later (to zip with data from buffer)
     all_phs = [o_ph, a_ph, adv_ph, ret_ph, logp_old_ph]
 
     # Every step, get: action, value, and logprob
     get_action_ops = [pi, v, logp_pi]
+    
+    main_vars = get_vars('main')
 
     model = {'o_ph':o_ph, 'a_ph':a_ph, 'adv_ph':adv_ph, 'ret_ph':ret_ph, 'logp_old_ph':logp_old_ph,
              'pi':pi, 'logp':logp, 'logp_pi':logp_pi, 'v':v, 'mu':mu,
-             'all_phs':all_phs, 'get_action_ops':get_action_ops}
+             'all_phs':all_phs, 'get_action_ops':get_action_ops, 'main_vars':main_vars}
         
     return model, sess
 
@@ -61,7 +66,7 @@ def create_ppo_graph(model, clip_ratio=0.2, pi_lr=3e-4, vf_lr=1e-3):
     clipfrac = tf.reduce_mean(tf.cast(clipped, tf.float32))
   
     # Policy train op
-    train_p = tf.train.AdamOptimizer(learning_rate=pi_lr).minimize(pi_loss)
+    train_pi = tf.train.AdamOptimizer(learning_rate=pi_lr).minimize(pi_loss)
     train_v = tf.train.AdamOptimizer(learning_rate=vf_lr).minimize(v_loss)
     
     # Accumulate graph

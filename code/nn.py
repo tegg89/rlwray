@@ -1,6 +1,7 @@
 import numpy as np
 import scipy.signal
 import tensorflow as tf
+from gym.spaces import Box, Discrete
 
 from util import gpu_sess, suppress_tf_warning
 # from episci.environment_wrappers.frame_stack_wrapper import FrameStack
@@ -46,11 +47,10 @@ def get_eval_env(batch=True):
         return CustomADTEnvContinuous(env_config)
 
 
-def mlp(x, hdims=[256, 256], actv=tf.nn.relu, out_actv=tf.nn.relu):
-    ki = tf.truncated_normal_initializer(stddev=0.1)
-    for hdim in hdims[:-1]:
-        x = tf.layers.dense(x, units=hdim, activation=actv, kernel_initializer=ki)
-    return tf.layers.dense(x, units=hdims[-1], activation=out_actv, kernel_initializer=ki)
+def mlp(x, hdims=[256,256], actv=tf.nn.relu, output_actv=None):
+    for h in hdims[:-1]:
+        x = tf.layers.dense(x, units=h, activation=actv)
+    return tf.layers.dense(x, units=hdims[-1], activation=output_actv)
 
 
 def gaussian_loglik(x, mu, log_std):
@@ -62,19 +62,25 @@ def gaussian_loglik(x, mu, log_std):
     return tf.reduce_sum(pre_sum, axis=1)
 
 
-def mlp_gaussian_policy(o, adim=2, hdims=[256,256], actv=tf.nn.relu):
-    net = mlp(x=o, hdims=hdims, actv=actv, out_actv=actv) # feature 
-    mu = tf.layers.dense(net, adim, activation=None) # mu
-    log_std = tf.layers.dense(net, adim, activation=None) # log_std
+def mlp_gaussian_policy(o, a, hdims=[64,64], actv=tf.nn.relu, output_actv=None, action_space=None):
+    adim = a.shape.as_list()[-1]
+    mu = mlp(x=o, hdims=hdims+[adim], actv=actv, output_actv=output_actv)
+    log_std = tf.get_variable(name='log_std', initializer=-0.5*np.ones(adim, dtype=np.float32))
+    std = tf.exp(log_std)
+    pi = mu + tf.random_normal(tf.shape(mu)) * std
+    logp = gaussian_loglik(a, mu, log_std)
+    logp_pi = gaussian_loglik(pi, mu, log_std)
+    return pi, logp, logp_pi, mu # <= mu is added for the deterministic policy
 
-    LOG_STD_MIN, LOG_STD_MAX = -10.0, +2.0
-    log_std = tf.clip_by_value(log_std, LOG_STD_MIN, LOG_STD_MAX) 
 
-    std = tf.exp(log_std) # std 
-    pi = mu + tf.random_normal(tf.shape(mu)) * std  # sampled
-    logp_pi = gaussian_loglik(x=pi, mu=mu, log_std=log_std) # log lik
-
-    return mu, pi, logp_pi
+def mlp_categorical_policy(o, a, hdims=[64,64], actv=tf.nn.relu, output_actv=None, action_space=None):
+    adim = action_space.n
+    logits = mlp(x=o, hdims=hdims+[adim], actv=actv, output_actv=None)
+    logp_all = tf.nn.log_softmax(logits)
+    pi = tf.squeeze(tf.multinomial(logits,1), axis=1)
+    logp = tf.reduce_sum(tf.one_hot(a, depth=adim) * logp_all, axis=1)
+    logp_pi = tf.reduce_sum(tf.one_hot(pi, depth=adim) * logp_all, axis=1)
+    return pi, logp, logp_pi, pi
 
 
 def squash_action(mu, pi, logp_pi):
@@ -85,24 +91,20 @@ def squash_action(mu, pi, logp_pi):
     return mu, pi, logp_pi
 
 
-def mlp_ppo_actor_critic(o, a, hdims=[256,256], actv=tf.nn.relu,
-                         out_actv=None, policy=mlp_gaussian_policy):
+def mlp_ppo_actor_critic(o, a, hdims=[64,64], actv=tf.nn.relu, 
+                         output_actv=None, policy=None, action_space=None):
     if policy is None and isinstance(action_space, Box):
         policy = mlp_gaussian_policy
     elif policy is None and isinstance(action_space, Discrete):
         policy = mlp_categorical_policy
-        
-    adim = a.shape.as_list()[-1]
-    
-    with tf.variable_scope('pi'):
-        pi, logp, logp_pi, mu = policy(o=o, adim=adim, hdims=hdims, actv=actv)
-        # mu, pi, logp_pi = squash_action(mu=mu, pi=pi, logp_pi=logp_pi)
-        
-    with tf.variable_scope('v'): 
-        v = tf.squeeze(mlp(x=o, hdims=hdims+[1], actv=actv, out_actv=None), axis=1)
-        
-    return mu, logp, logp_pi, v
 
+    with tf.variable_scope('pi'):
+        pi, logp, logp_pi, mu = policy(
+            o=o, a=a, hdims=hdims, actv=actv, output_actv=output_actv, action_space=action_space)
+    with tf.variable_scope('v'):
+        v = tf.squeeze(mlp(x=o, hdims=hdims+[1], actv=actv, output_actv=None), axis=1)
+    return pi, logp, logp_pi, v, mu
+    
 
 def placeholder(dim=None):
     return tf.placeholder(dtype=tf.float32, shape=(None, dim) if dim else (None,))

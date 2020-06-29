@@ -68,7 +68,7 @@ class PPOBuffer:
         self.gamma, self.lam = gamma, lam
         self.ptr, self.path_start_idx, self.max_size = 0, 0, size
 
-    def store(self, obs, act, rew, val, logp):
+    def store(self, obs, act, rew, val, logp, ret, adv):
         """
         Append one timestep of agent-environment interaction to the buffer.
         """
@@ -78,6 +78,8 @@ class PPOBuffer:
         self.rew_buf[self.ptr] = rew
         self.val_buf[self.ptr] = val
         self.logp_buf[self.ptr] = logp
+        self.ret_buf[self.ptr] = ret
+        self.adv_buf[self.ptr] = adv
         self.ptr += 1
 
     def finish_path(self, last_val=0):
