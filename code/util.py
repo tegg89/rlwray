@@ -2,7 +2,7 @@ import os,time
 import numpy as np
 import tensorflow as tf
 
-from mpi_tools import mpi_statistics_scalar
+from nn import discount_cumsum
 
     
 def suppress_tf_warning():
@@ -70,7 +70,7 @@ class PPOBuffer:
         self.gamma, self.lam = gamma, lam
         self.ptr, self.path_start_idx, self.max_size = 0, 0, size
 
-    def store(self, obs, act, rew, val, logp, ret, adv):
+    def store(self, obs, act, rew, val, logp):
         """
         Append one timestep of agent-environment interaction to the buffer.
         """
@@ -80,8 +80,6 @@ class PPOBuffer:
         self.rew_buf[self.ptr] = rew
         self.val_buf[self.ptr] = val
         self.logp_buf[self.ptr] = logp
-        self.ret_buf[self.ptr] = ret
-        self.adv_buf[self.ptr] = adv
         self.ptr += 1
 
     def finish_path(self, last_val=0):
@@ -121,7 +119,7 @@ class PPOBuffer:
         # assert self.ptr == self.max_size    # buffer has to be full before you can get
         self.ptr, self.path_start_idx = 0, 0
         # the next two lines implement the advantage normalization trick
-        adv_mean, adv_std = mpi_statistics_scalar(self.adv_buf)
+        adv_mean, adv_std = statistics_scalar(self.adv_buf)
         self.adv_buf = (self.adv_buf - adv_mean) / adv_std
         return [self.obs_buf, self.act_buf, self.adv_buf, 
                 self.ret_buf, self.logp_buf]
@@ -224,3 +222,25 @@ def restore_ppo_model_and_buffer(npz_path,R,buffer,VERBOSE=True):
         a.append(l[buffer_name])
     buffer.restore(a)
     
+    
+def statistics_scalar(x, with_min_and_max=False):
+    """
+    Get mean/std and optional min/max of scalar x across MPI processes.
+    Args:
+        x: An array containing samples of the scalar to produce statistics
+            for.
+        with_min_and_max (bool): If true, return min and max of x in 
+            addition to mean and std.
+    """
+    x = np.array(x, dtype=np.float32)
+    global_sum, global_n = np.sum(x), len(x)
+    mean = global_sum / global_n
+
+    global_sum_sq = np.sum(np.sum((x - mean)**2))
+    std = np.sqrt(global_sum_sq / global_n)  # compute global std
+
+    if with_min_and_max:
+        global_min = (np.min(x) if len(x) > 0 else np.inf)
+        global_max = (np.max(x) if len(x) > 0 else -np.inf)
+        return mean, std, global_min, global_max
+    return mean, std

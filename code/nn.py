@@ -3,7 +3,7 @@ import scipy.signal
 import tensorflow as tf
 from gym.spaces import Box, Discrete
 
-from util import gpu_sess, suppress_tf_warning
+# from util import gpu_sess, suppress_tf_warning
 # from episci.environment_wrappers.frame_stack_wrapper import FrameStack
 # from episci.environment_wrappers.tactical_action_adt_env_continuous import CustomADTEnvContinuous
 # from episci.agents.utils.constants import Agents, RewardType
@@ -47,7 +47,7 @@ def get_eval_env(batch=True):
         return CustomADTEnvContinuous(env_config)
 
 
-def mlp(x, hdims=[256,256], actv=tf.nn.relu, output_actv=None):
+def mlp(x, hdims=[64,64], actv=tf.nn.relu, output_actv=None):
     for h in hdims[:-1]:
         x = tf.layers.dense(x, units=h, activation=actv)
     return tf.layers.dense(x, units=hdims[-1], activation=output_actv)
