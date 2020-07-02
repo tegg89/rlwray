@@ -122,7 +122,7 @@ class PPOBuffer:
         adv_mean, adv_std = statistics_scalar(self.adv_buf)
         self.adv_buf = (self.adv_buf - adv_mean) / adv_std
         return [self.obs_buf, self.act_buf, self.adv_buf, 
-                self.ret_buf, self.logp_buf]
+                self.ret_buf, self.rew_buf, self.logp_buf, self.val_buf]
 
 
 def gpu_sess():
